@@ -3,7 +3,7 @@
 #Date: 2025-10-31
 
 #Install packages
-packages <- c("haven", "here", "dplyr", "flextable", "purrr", "broom")
+packages <- c("haven", "here", "dplyr", "flextable", "purrr", "broom", "ggplot2")
 
 if(!require("pacman"))install.packages("pacman")
 
