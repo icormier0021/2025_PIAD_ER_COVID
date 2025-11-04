@@ -1,0 +1,533 @@
+---
+title: "PIAD Maternal ER, COVID-19 Experiences, and Infant Socioemotional Development: Preliminary Analysis"
+author: "Isaac Cormier"
+date: "11/03/2025"
+output:
+  html_document:
+    self_contained: true
+    code_download: yes
+    code_folding: show
+    theme:
+        bslib: yes
+    toc: true
+    toc_depth: 5
+---
+```{css, echo = FALSE}
+table caption {
+  caption-side: top !important;
+}
+/* green highlight for statistically significant */
+.sig-highlight {
+background-color: #d4edda;
+padding: 0 2px;
+}
+
+/* red highlight for statistically non-significant */
+.nsig-highlight {
+background-color: #f8d7da;
+padding: 0 2px;
+}
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE
+)
+
+highlight_sig_terms <- function(x) {
+
+#Red for "statistically non-significant"
+x <- gsub(
+"statistically non-significant",
+"<span class='nsig-highlight'>statistically non-significant</span>",
+x,
+fixed = TRUE
+)
+#Green for "statistically significant"
+x <- gsub(
+"statistically significant",
+"<span class='sig-highlight'>statistically significant</span>",
+x,
+fixed = TRUE
+)
+x
+}
+
+get_report_text <- function(model) {
+txt <- report_text(model)
+highlight_sig_terms(txt)
+}
+```
+
+# 1. Background
+
+This report summarizes preliminary regression models examining whether prenatal maternal emotion dysregulation (DERS) and prenatal COVID-19 experiences (combined subjective and objective) are associated with BITSEA child socioemotional problems at 15, 24, and 35 months.
+
+# 2. Packages and data
+
+```{r define_pkgs_data}
+
+packages <- c("haven", "here", "dplyr", "purrr", "broom", "knitr", "kableExtra", "ggplot2", "performance", "see", "report", "gt", "parameters")
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(char = packages, character.only = TRUE)
+
+#read data
+df <- read_sav(here("data", "PIAD_COVID_Preg_35M.sav")) %>% 
+  rename(COVID_Comp_Total = AvgObjCOVID40rescale) %>%
+        mutate(
+                DERS_Total_std = as.numeric(scale(DERS_Total)),
+                COVID_Comp_Total_std = as.numeric(scale(COVID_Comp_Total))
+        )
+
+#main variables
+outcomes <- c(
+  "BITSEA_Prob_Total_15M",
+  "BITSEA_Prob_Total_24M",
+  "BITSEA_Prob_Total_35M"
+)
+predictors <- c("DERS_Total", "COVID_Comp_Total")
+
+
+createKable <- function(tbl, title = "My Title"){
+  boundary_rows <- which(
+    c(FALSE, tbl[[1]][-1] != tbl[[1]][-length(tbl[[1]])])
+  )
+  
+  align_vec <- c("l", rep("r", ncol(tbl) - 1))
+  
+  kable(
+    tbl,
+    col.names = names(tbl),
+    align     = align_vec,
+    digits    = 4,        
+    format    = "html",
+    caption   = title
+  ) %>%
+    kable_styling(
+      bootstrap_options = c("condensed", "bordered"),
+      full_width        = FALSE,
+      position          = "left"
+    ) %>%
+    column_spec(
+      which(sapply(tbl, is.numeric)),
+      width     = "60px",
+      extra_css = "padding-left:6px; padding-right:6px;"
+    ) %>% 
+    row_spec(
+      boundary_rows,
+      extra_css = "border-top: 3px solid black;"
+    ) %>%
+        scroll_box(width = "1000px", height = "400px")
+}
+```
+
+# 3. Check Missing Values
+
+```{r missingVals}
+missing <- df %>% 
+  select(all_of(c(outcomes, predictors))) %>% 
+  summarise(across(everything(), ~ sum(is.na(.))))
+
+createKable(
+  missing,
+  title = "Number of missing values by Variable"
+)
+```
+
+# 4. Visualize Relatonship between Variables
+```{r visual_plots, fig.width=9, fig.height=5, fig.align='center'}
+for (outcome in outcomes) {
+        p <- ggplot(df) +
+                aes(x = COVID_Comp_Total, y = .data[[outcome]], colour = DERS_Total) +
+                geom_point() +
+                scale_color_gradient() +
+                labs(
+                        y = paste0(outcome),
+                        x = "COVID-19 Experience Comp Score",
+                        colour = "DERS_Total Score",
+                        title = paste0("Association between COVID-19 Experiences, Prenatal Total DERS, and ", outcome)
+                ) +
+                theme_minimal()
+        print(p)
+}
+
+```
+
+# 4. Diagnostic plots and normality
+
+Creates regression diagnsotic plots to check that asssumptions of normality are met before running the models.
+Also runs Shapiro-Wilks Test of Normality (although it is important to interpret the results of this test alongside the Q-Q Plot). 
+
+## a) Linear Main Effects
+```{r diagnostics}
+check_assumptions_quad<- function(data, outcome) {
+        model <- lm(as.formula(paste0(outcome, " ~COVID_Comp_Total + I(COVID_Comp_Total^2) + DERS_Total")), data=data)
+        #Save plot as png file
+        outfile <- here("prelim_analysis", "plots", paste0(outcome, "_diagnostic_plot_quad.png"))
+        dir.create(dirname(outfile), showWarnings = FALSE, recursive = TRUE)
+        png(outfile, width = 1200, height = 1200)
+        par(mfrow = c(2,2))
+        plot(model)
+        dev.off()
+        #Send plot to viewer
+        par(mfrow = c(2,2))
+        plot(model)
+        print(check_model(model))
+        
+        #Print shaprio-wilk test results from residuals
+        resid <- residuals(model)
+        shapWilk <- shapiro.test(resid)
+        print(shapWilk)
+}
+check_assumptions_lin <- function(data, outcome) {
+        model <- lm(as.formula(paste0(outcome, " ~COVID_Comp_Total + DERS_Total")), data=data)
+        #Save plot as png file
+        outfile <- here("prelim_analysis", "plots", paste0(outcome, "_diagnostic_plot_lin.png"))
+        dir.create(dirname(outfile), showWarnings = FALSE, recursive = TRUE)
+        png(outfile, width = 1200, height = 1200)
+        par(mfrow = c(2,2))
+        plot(model)
+        dev.off()
+        #Send plot to viewer
+        par(mfrow = c(2,2))
+        plot(model)
+        print(check_model(model))
+        
+        #Print shaprio-wilk test results from residuals
+        resid <- residuals(model)
+        shapWilk <- shapiro.test(resid)
+        print(shapWilk)
+}
+```
+### Regression Diagnostics for BITSEA Total Composite Score at 15M
+
+```{r 15M_diagnostic_lin}
+check_assumptions_lin(df, "BITSEA_Prob_Total_15M")
+```
+
+### Regression Diagnostics for BITSEA Total Composite Score at 24M
+
+```{r 24M_diagnostic_lin}
+check_assumptions_lin(df, "BITSEA_Prob_Total_24M")
+```
+
+### Regression Diagnostics for BITSEA Total Composite Score at 35M
+
+```{r 35M_diagnostic_lin}
+check_assumptions_lin(df, "BITSEA_Prob_Total_35M")
+```
+
+## b) Quadratic Main Effects
+
+### Regression Diagnostics for BITSEA Total Composite Score at 15M
+
+```{r 15M_diagnostic_quad}
+check_assumptions_quad(df, "BITSEA_Prob_Total_15M")
+```
+
+### Regression Diagnostics for BITSEA Total Composite Score at 24M
+
+```{r 24M_diagnostic_qud}
+check_assumptions_quad(df, "BITSEA_Prob_Total_24M")
+```
+
+### Regression Diagnostics for BITSEA Total Composite Score at 35M
+
+```{r 35M_diagnostic_quad}
+check_assumptions_quad(df, "BITSEA_Prob_Total_35M")
+```
+
+# 5. Run the Linear Regression Models
+
+For each outcome variable (BITSEA_Prob_Total_15M, BITSEA_Prob_Total_24M, BITSEA_Prob_Total_35M), there are four models:
+
+1) A main-effects model of the raw prenatal DERS_Total and the COVID_Comp_Total predictor variables
+
+2) A main-effects model of the standardized prenatal DERS_Total and COVID_Comp_Total predictor variables
+
+3) An interaction effect model of the raw prenatal DERS_Total and COVID_Comp_Total predictor variables
+
+4) An interaction effect model of the standardized prenatal DERS_Total and COVID_Comp_Total predictor variables
+        
+Model versions with standardized predictors were prepared below the raw models due to the value of centering the predictors of a model prior to running regression analysis (See Cohen et al.'s (2003) textbook "Applied multiple regression/correlation analysis for the behavioral sciences (3rd ed.)").
+
+## a) Regression Results for BITSEA Total Composite Score at 15 Months
+
+### i) Main-effects for 15M
+
+```{r main_15_lin}
+mdl <- lm(BITSEA_Prob_Total_15M ~ COVID_Comp_Total + DERS_Total, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+### ii) Standardized Main-effects for 15M
+```{r stdmain_15_lin}
+mdl <- lm(BITSEA_Prob_Total_15M ~ COVID_Comp_Total_std + DERS_Total_std, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+### iii) Interaction-effects for 15M
+```{r int_15_lin}
+mdl <- lm(BITSEA_Prob_Total_15M ~ COVID_Comp_Total * DERS_Total, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+### iv) Standardized interaction-effects for 15M
+
+```{r stdint_15_lin}
+mdl <- lm(BITSEA_Prob_Total_15M ~ COVID_Comp_Total_std * DERS_Total_std, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+## b) Regression Results for BITSEA Total Composite Score at 24 Months
+
+### i) Main-effects for 24M
+
+```{r main_24_lin}
+mdl <- lm(BITSEA_Prob_Total_24M ~ COVID_Comp_Total + DERS_Total, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+### ii) Standardized Main-effects for 24M
+```{r stdmain_24_lin}
+mdl <- lm(BITSEA_Prob_Total_24M ~ COVID_Comp_Total_std + DERS_Total_std, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+### iii) Interaction-effects for 24M
+```{r int_24_lin}
+mdl <- lm(BITSEA_Prob_Total_24M ~ COVID_Comp_Total * DERS_Total, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+### iv) Standardized interaction-effects for 24M
+
+```{r stdint_24_lin}
+mdl <- lm(BITSEA_Prob_Total_24M ~ COVID_Comp_Total_std * DERS_Total_std, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+## c) Regression Results for BITSEA Total Composite Score at 35 Months
+
+### i) Main-effects for 35M
+
+```{r main_35_lin}
+mdl <- lm(BITSEA_Prob_Total_35M ~ COVID_Comp_Total + DERS_Total, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+### ii) Standardized Main-effects for 35M
+```{r stdmain_35_lin}
+mdl <- lm(BITSEA_Prob_Total_35M ~ COVID_Comp_Total_std + DERS_Total_std, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+### iii) Interaction-effects for 35M
+```{r int_35_lin}
+mdl <- lm(BITSEA_Prob_Total_35M ~ COVID_Comp_Total * DERS_Total, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+### iv) Standardized interaction-effects for 35M
+
+```{r stdint_35_lin}
+mdl <- lm(BITSEA_Prob_Total_35M ~ COVID_Comp_Total_std * DERS_Total_std, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+# 6. Run the Quadratic Regression Models
+
+For each outcome variable of the quadratic regression model variants (BITSEA_Prob_Total_15M, BITSEA_Prob_Total_24M, BITSEA_Prob_Total_35M), there are four models:
+
+1) A main-effects model of the raw prenatal DERS_Total and the first and second order of COVID_Comp_Total predictor variables
+
+2) A main-effects model of the standardized prenatal DERS_Total and the first and second order of COVID_Comp_Total predictor variables
+
+3) An interaction effect model of the raw prenatal DERS_Total and the first and second order of COVID_Comp_Total predictor variables
+
+4) An interaction effect model of the standardized prenatal DERS_Total and the first and second order of COVID_Comp_Total predictor variables
+
+
+## a) Regression Results for BITSEA Total Composite Score at 15 Months
+
+### i) Main-effects for 15M
+
+```{r main_15_quad}
+mdl <- lm(BITSEA_Prob_Total_15M ~ COVID_Comp_Total + I(COVID_Comp_Total^2) + DERS_Total, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+### ii) Standardized Main-effects for 15M
+```{r stdmain_15_quad}
+mdl <- lm(BITSEA_Prob_Total_15M ~ COVID_Comp_Total_std + I(COVID_Comp_Total_std^2) + DERS_Total_std, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+### iii) Interaction-effects for 15M
+```{r int_15_quad}
+mdl <- lm(BITSEA_Prob_Total_15M ~ (COVID_Comp_Total + I(COVID_Comp_Total^2)) * DERS_Total, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+### iv) Standardized interaction-effects for 15M
+
+```{r stdint_15_quad}
+mdl <- lm(BITSEA_Prob_Total_15M ~ (COVID_Comp_Total_std + I(COVID_Comp_Total_std^2)) * DERS_Total_std, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+## b) Regression Results for BITSEA Total Composite Score at 24 Months
+
+### i) Main-effects for 24M
+
+```{r main_24_quad}
+mdl <- lm(BITSEA_Prob_Total_24M ~ COVID_Comp_Total + I(COVID_Comp_Total^2) + DERS_Total, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+### ii) Standardized Main-effects for 24M
+```{r stdmain_24_quad}
+mdl <- lm(BITSEA_Prob_Total_24M ~ COVID_Comp_Total_std + I(COVID_Comp_Total_std^2) + DERS_Total_std, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+### iii) Interaction-effects for 24M
+```{r int_24_quad}
+mdl <- lm(BITSEA_Prob_Total_24M ~ (COVID_Comp_Total + I(COVID_Comp_Total^2)) * DERS_Total, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+### iv) Standardized interaction-effects for 24M
+
+```{r stdint_24_quad}
+mdl <- lm(BITSEA_Prob_Total_24M ~ (COVID_Comp_Total_std + I(COVID_Comp_Total_std^2)) * DERS_Total_std, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+## c) Regression Results for BITSEA Total Composite Score at 35 Months
+
+### i) Main-effects for 35M
+
+```{r main_35_quad}
+mdl <- lm(BITSEA_Prob_Total_35M ~ COVID_Comp_Total + I(COVID_Comp_Total^2) + DERS_Total, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+### ii) Standardized Main-effects for 35M
+```{r stdmain_35_quad}
+mdl <- lm(BITSEA_Prob_Total_35M ~ COVID_Comp_Total_std + I(COVID_Comp_Total_std^2) + DERS_Total_std, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+### iii) Interaction-effects for 35M
+```{r int_35_quad}
+mdl <- lm(BITSEA_Prob_Total_35M ~ (COVID_Comp_Total + I(COVID_Comp_Total^2)) * DERS_Total, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
+### iv) Standardized interaction-effects for 35M
+
+```{r stdint_35_quad}
+mdl <- lm(BITSEA_Prob_Total_35M ~ (COVID_Comp_Total_std + I(COVID_Comp_Total^2)) * DERS_Total_std, data=df)
+print_html(model_parameters(mdl), summary = TRUE)
+print_html(model_performance(mdl), summary = TRUE)
+
+report <- get_report_text(mdl)
+```
+`r report`
+
