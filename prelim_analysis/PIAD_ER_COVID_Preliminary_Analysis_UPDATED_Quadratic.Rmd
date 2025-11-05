@@ -16,6 +16,17 @@ output:
 table caption {
   caption-side: top !important;
 }
+/* green highlight for statistically significant */
+.sig-highlight {
+background-color: #d4edda;
+padding: 0 2px;
+}
+
+/* red highlight for statistically non-significant */
+.nsig-highlight {
+background-color: #f8d7da;
+padding: 0 2px;
+}
 ```
 
 ```{r setup, include=FALSE}
@@ -24,6 +35,30 @@ knitr::opts_chunk$set(
   message = FALSE,
   warning = FALSE
 )
+
+highlight_sig_terms <- function(x) {
+
+#Red for "statistically non-significant"
+x <- gsub(
+"statistically non-significant",
+"<span class='nsig-highlight'>statistically non-significant</span>",
+x,
+fixed = TRUE
+)
+#Green for "statistically significant"
+x <- gsub(
+"statistically significant",
+"<span class='sig-highlight'>statistically significant</span>",
+x,
+fixed = TRUE
+)
+x
+}
+
+get_report_text <- function(model) {
+txt <- report_text(model)
+highlight_sig_terms(txt)
+}
 ```
 
 # 1. Background
@@ -221,34 +256,172 @@ Model versions with standardized predictors were prepared below the raw models d
 
 ## a) Regression Results for BITSEA Total Composite Score at 15 Months
 
+```{r regressionPlots}
+regression_plots <- function(df,
+                             mdl,
+                             outcome,
+                             x_var   = "COVID_Comp_Total",
+                             ders_var = "DERS_Total") {
+  covid_seq <- seq(
+    from = min(df[[x_var]], na.rm = TRUE),
+    to   = max(df[[x_var]], na.rm = TRUE),
+    length.out = 100
+  )
+
+  ders_levels <- quantile(
+    df[[ders_var]],
+    probs = c(0, 0.25, 0.5, 0.75, 1),
+    na.rm = TRUE
+  )
+
+  ders_vals <- as.numeric(ders_levels)
+  ders_labels <- c(
+    sprintf("Min (%.2f)",     ders_vals[1]),
+    sprintf("25th %% (%.2f)", ders_vals[2]),
+    sprintf("Median (%.2f)",  ders_vals[3]),
+    sprintf("75th %% (%.2f)", ders_vals[4]),
+    sprintf("Max (%.2f)",     ders_vals[5])
+  )
+
+  line_cols   <- c("blue", "red", "darkgreen", "purple", "orange")
+  ribbon_cols <- alpha(line_cols, 0.18)
+
+  pred_grid <- expand.grid(
+    x          = covid_seq,
+    DERS_index = seq_along(ders_vals)
+  )
+  names(pred_grid)[names(pred_grid) == "x"] <- x_var
+
+  pred_grid[[ders_var]] <- ders_vals[pred_grid$DERS_index]
+  pred_grid$DERS_Level  <- factor(ders_labels[pred_grid$DERS_index],
+                                  levels = ders_labels)
+
+  pred <- predict(mdl, newdata = pred_grid, se.fit = TRUE)
+  pred_grid$y_hat <- pred$fit
+  pred_grid$ymin  <- pred$fit - 1.96 * pred$se.fit
+  pred_grid$ymax  <- pred$fit + 1.96 * pred$se.fit
+
+  mdl_summary   <- summary(mdl)
+  r_squared     <- mdl_summary$r.squared
+  adj_r_squared <- mdl_summary$adj.r.squared
+  f_stat        <- mdl_summary$fstatistic
+  p_value       <- pf(f_stat[1], f_stat[2], f_stat[3], lower.tail = FALSE)
+
+  stats_text <- sprintf(
+    "R² = %.3f\nAdj. R² = %.3f\nF(%d, %d) = %.2f\np = %.4f",
+    r_squared, adj_r_squared, f_stat[2], f_stat[3], f_stat[1], p_value
+  )
+
+  ggplot(
+    df,
+    aes(x = !!rlang::sym(x_var), y = !!rlang::sym(outcome))
+  ) +
+    geom_point(alpha = 0.4) +
+    geom_ribbon(
+      data = pred_grid,
+      aes(
+        x    = !!rlang::sym(x_var),
+        ymin = ymin,
+        ymax = ymax,
+        fill = DERS_Level
+      ),
+      inherit.aes = FALSE,
+      show.legend = FALSE
+    ) +
+    geom_line(
+      data = pred_grid,
+      aes(
+        x     = !!rlang::sym(x_var),
+        y     = y_hat,
+        color = DERS_Level
+      ),
+      linewidth = 1
+    ) +
+    scale_color_manual(
+      name   = "DERS level",
+      values = line_cols
+    ) +
+    scale_fill_manual(
+      values = ribbon_cols,
+      guide  = "none"
+    ) +
+    labs(
+      x        = x_var,
+      y        = outcome,
+      title    = paste(outcome, "vs", x_var),
+      subtitle = "Lines show model predictions at DERS quantiles\nShaded areas are 95% CIs"
+    ) +
+    annotate(
+      "text",
+      x      = Inf,
+      y      = Inf,
+      label  = stats_text,
+      hjust  = 1.1,
+      vjust  = 1.1,
+      size   = 3
+    ) +
+    coord_cartesian(clip = "off") +
+    theme_minimal() +
+    theme(
+      plot.margin     = margin(10, 80, 10, 10),
+      legend.position = "right",
+      legend.title    = element_text(face = "bold")
+    )
+}
+
+
+```
+
+
 ### i) Main-effects for 15M
 
 ```{r main_15_lin}
 mdl <- lm(BITSEA_Prob_Total_15M ~ COVID_Comp_Total + DERS_Total, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_15M",
+  x_var   = "COVID_Comp_Total",
+  ders_var = "DERS_Total"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
 ### ii) Standardized Main-effects for 15M
 ```{r stdmain_15_lin}
 mdl <- lm(BITSEA_Prob_Total_15M ~ COVID_Comp_Total_std + DERS_Total_std, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_15M",
+  x_var   = "COVID_Comp_Total_std",
+  ders_var = "DERS_Total_std"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
 ### iii) Interaction-effects for 15M
 ```{r int_15_lin}
 mdl <- lm(BITSEA_Prob_Total_15M ~ COVID_Comp_Total * DERS_Total, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_15M",
+  x_var   = "COVID_Comp_Total",
+  ders_var = "DERS_Total"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
@@ -256,10 +429,17 @@ report <- report_text(mdl)
 
 ```{r stdint_15_lin}
 mdl <- lm(BITSEA_Prob_Total_15M ~ COVID_Comp_Total_std * DERS_Total_std, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_15M",
+  x_var   = "COVID_Comp_Total_std",
+  ders_var = "DERS_Total_std"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
@@ -269,30 +449,51 @@ report <- report_text(mdl)
 
 ```{r main_24_lin}
 mdl <- lm(BITSEA_Prob_Total_24M ~ COVID_Comp_Total + DERS_Total, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_24M",
+  x_var   = "COVID_Comp_Total",
+  ders_var = "DERS_Total"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
 ### ii) Standardized Main-effects for 24M
 ```{r stdmain_24_lin}
 mdl <- lm(BITSEA_Prob_Total_24M ~ COVID_Comp_Total_std + DERS_Total_std, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_24M",
+  x_var   = "COVID_Comp_Total_std",
+  ders_var = "DERS_Total_std"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
 ### iii) Interaction-effects for 24M
 ```{r int_24_lin}
 mdl <- lm(BITSEA_Prob_Total_24M ~ COVID_Comp_Total * DERS_Total, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_24M",
+  x_var   = "COVID_Comp_Total",
+  ders_var = "DERS_Total"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
@@ -300,10 +501,17 @@ report <- report_text(mdl)
 
 ```{r stdint_24_lin}
 mdl <- lm(BITSEA_Prob_Total_24M ~ COVID_Comp_Total_std * DERS_Total_std, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_24M",
+  x_var   = "COVID_Comp_Total_std",
+  ders_var = "DERS_Total_std"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
@@ -313,30 +521,52 @@ report <- report_text(mdl)
 
 ```{r main_35_lin}
 mdl <- lm(BITSEA_Prob_Total_35M ~ COVID_Comp_Total + DERS_Total, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_35M",
+  x_var   = "COVID_Comp_Total",
+  ders_var = "DERS_Total"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
 ### ii) Standardized Main-effects for 35M
 ```{r stdmain_35_lin}
 mdl <- lm(BITSEA_Prob_Total_35M ~ COVID_Comp_Total_std + DERS_Total_std, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_35M",
+  x_var   = "COVID_Comp_Total_std",
+  ders_var = "DERS_Total_std"
+)
+
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
 ### iii) Interaction-effects for 35M
 ```{r int_35_lin}
 mdl <- lm(BITSEA_Prob_Total_35M ~ COVID_Comp_Total * DERS_Total, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_35M",
+  x_var   = "COVID_Comp_Total",
+  ders_var = "DERS_Total"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
@@ -344,10 +574,17 @@ report <- report_text(mdl)
 
 ```{r stdint_35_lin}
 mdl <- lm(BITSEA_Prob_Total_35M ~ COVID_Comp_Total_std * DERS_Total_std, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_35M",
+  x_var   = "COVID_Comp_Total_std",
+  ders_var = "DERS_Total_std"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
@@ -370,30 +607,51 @@ For each outcome variable of the quadratic regression model variants (BITSEA_Pro
 
 ```{r main_15_quad}
 mdl <- lm(BITSEA_Prob_Total_15M ~ COVID_Comp_Total + I(COVID_Comp_Total^2) + DERS_Total, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_15M",
+  x_var   = "COVID_Comp_Total",
+  ders_var = "DERS_Total"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
 ### ii) Standardized Main-effects for 15M
 ```{r stdmain_15_quad}
 mdl <- lm(BITSEA_Prob_Total_15M ~ COVID_Comp_Total_std + I(COVID_Comp_Total_std^2) + DERS_Total_std, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_15M",
+  x_var   = "COVID_Comp_Total_std",
+  ders_var = "DERS_Total_std"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
 ### iii) Interaction-effects for 15M
 ```{r int_15_quad}
 mdl <- lm(BITSEA_Prob_Total_15M ~ (COVID_Comp_Total + I(COVID_Comp_Total^2)) * DERS_Total, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_15M",
+  x_var   = "COVID_Comp_Total",
+  ders_var = "DERS_Total"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
@@ -401,10 +659,17 @@ report <- report_text(mdl)
 
 ```{r stdint_15_quad}
 mdl <- lm(BITSEA_Prob_Total_15M ~ (COVID_Comp_Total_std + I(COVID_Comp_Total_std^2)) * DERS_Total_std, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_15M",
+  x_var   = "COVID_Comp_Total_std",
+  ders_var = "DERS_Total_std"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
@@ -414,30 +679,51 @@ report <- report_text(mdl)
 
 ```{r main_24_quad}
 mdl <- lm(BITSEA_Prob_Total_24M ~ COVID_Comp_Total + I(COVID_Comp_Total^2) + DERS_Total, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_24M",
+  x_var   = "COVID_Comp_Total",
+  ders_var = "DERS_Total"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
 ### ii) Standardized Main-effects for 24M
 ```{r stdmain_24_quad}
 mdl <- lm(BITSEA_Prob_Total_24M ~ COVID_Comp_Total_std + I(COVID_Comp_Total_std^2) + DERS_Total_std, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_24M",
+  x_var   = "COVID_Comp_Total_std",
+  ders_var = "DERS_Total_std"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
 ### iii) Interaction-effects for 24M
 ```{r int_24_quad}
 mdl <- lm(BITSEA_Prob_Total_24M ~ (COVID_Comp_Total + I(COVID_Comp_Total^2)) * DERS_Total, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_24M",
+  x_var   = "COVID_Comp_Total",
+  ders_var = "DERS_Total"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
@@ -445,10 +731,17 @@ report <- report_text(mdl)
 
 ```{r stdint_24_quad}
 mdl <- lm(BITSEA_Prob_Total_24M ~ (COVID_Comp_Total_std + I(COVID_Comp_Total_std^2)) * DERS_Total_std, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_24M",
+  x_var   = "COVID_Comp_Total_std",
+  ders_var = "DERS_Total_std"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
@@ -458,41 +751,69 @@ report <- report_text(mdl)
 
 ```{r main_35_quad}
 mdl <- lm(BITSEA_Prob_Total_35M ~ COVID_Comp_Total + I(COVID_Comp_Total^2) + DERS_Total, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_35M",
+  x_var   = "COVID_Comp_Total",
+  ders_var = "DERS_Total"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
 ### ii) Standardized Main-effects for 35M
 ```{r stdmain_35_quad}
 mdl <- lm(BITSEA_Prob_Total_35M ~ COVID_Comp_Total_std + I(COVID_Comp_Total_std^2) + DERS_Total_std, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_35M",
+  x_var   = "COVID_Comp_Total_std",
+  ders_var = "DERS_Total_std"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
 ### iii) Interaction-effects for 35M
 ```{r int_35_quad}
 mdl <- lm(BITSEA_Prob_Total_35M ~ (COVID_Comp_Total + I(COVID_Comp_Total^2)) * DERS_Total, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_35M",
+  x_var   = "COVID_Comp_Total",
+  ders_var = "DERS_Total"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
 ### iv) Standardized interaction-effects for 35M
 
 ```{r stdint_35_quad}
-mdl <- lm(BITSEA_Prob_Total_35M ~ (COVID_Comp_Total_std + I(COVID_Comp_Total^2)) * DERS_Total_std, data=df)
+mdl <- lm(BITSEA_Prob_Total_35M ~ (COVID_Comp_Total_std + I(COVID_Comp_Total_std^2)) * DERS_Total_std, data=df)
+regression_plots(
+  df      = df,
+  mdl     = mdl,
+  outcome = "BITSEA_Prob_Total_35M",
+  x_var   = "COVID_Comp_Total_std",
+  ders_var = "DERS_Total_std"
+)
 print_html(model_parameters(mdl), summary = TRUE)
 print_html(model_performance(mdl), summary = TRUE)
+report <- get_report_text(mdl)
 
-report <- report_text(mdl)
 ```
 `r report`
 
